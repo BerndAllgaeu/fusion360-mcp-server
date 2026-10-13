@@ -19,7 +19,7 @@ Claude Code ←(stdio MCP)→ This Server ←(TCP :9876)→ Fusion360MCP Add-in 
 
 ```bash
 uv sync --dev      # install deps
-uv run pytest -v   # run tests (275 tests)
+uv run pytest -v   # run tests
 uv run ruff check  # lint
 ```
 
@@ -49,3 +49,4 @@ uv run ruff check  # lint
 - `ping` is the health check — it never touches the Fusion API
 - Every tool has annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`)
 - Every tool has a mock handler so `--mode mock` works without Fusion running
+- Sketches must end up fully dimensioned: `draw_*` tools add driving sketch dimensions by default (`dimension=true`) and report `is_fully_constrained`; the rule is also sent to clients as `SERVER_INSTRUCTIONS` in `server.py`

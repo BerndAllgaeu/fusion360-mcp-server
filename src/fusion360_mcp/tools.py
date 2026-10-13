@@ -21,7 +21,10 @@ TOOLS: list[dict] = [
     {
         "name": "get_object_info",
         "title": "Get Object Info",
-        "description": "Get detailed info about a named body or sketch",
+        "description": (
+            "Get detailed info about a named body or sketch. Sketches report "
+            "is_fully_constrained, dimension_count and constraint_count."
+        ),
         "inputSchema": {
             "type": "object",
             "required": ["name"],
@@ -73,7 +76,11 @@ TOOLS: list[dict] = [
     {
         "name": "draw_rectangle",
         "title": "Draw Rectangle",
-        "description": "Draw a rectangle in the most recent sketch",
+        "description": (
+            "Draw a rectangle in the most recent sketch. By default adds "
+            "width/height dimensions, H/V constraints and the corner position "
+            "relative to the sketch origin; returns is_fully_constrained."
+        ),
         "inputSchema": {
             "type": "object",
             "required": ["width", "height"],
@@ -83,13 +90,25 @@ TOOLS: list[dict] = [
                 "origin_x": {"type": "number", "default": 0},
                 "origin_y": {"type": "number", "default": 0},
                 "origin_z": {"type": "number", "default": 0},
+                "dimension": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Add driving sketch dimensions and constraints "
+                        "anchored to the sketch origin (not user parameters)"
+                    ),
+                },
             },
         },
     },
     {
         "name": "draw_circle",
         "title": "Draw Circle",
-        "description": "Draw a circle in the most recent sketch",
+        "description": (
+            "Draw a circle in the most recent sketch. By default adds a "
+            "diameter dimension and positions the centre relative to the "
+            "sketch origin; returns is_fully_constrained."
+        ),
         "inputSchema": {
             "type": "object",
             "required": ["radius"],
@@ -98,13 +117,26 @@ TOOLS: list[dict] = [
                 "center_x": {"type": "number", "default": 0},
                 "center_y": {"type": "number", "default": 0},
                 "center_z": {"type": "number", "default": 0},
+                "dimension": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Add driving sketch dimensions and constraints "
+                        "anchored to the sketch origin (not user parameters)"
+                    ),
+                },
             },
         },
     },
     {
         "name": "draw_line",
         "title": "Draw Line",
-        "description": "Draw a line in the most recent sketch",
+        "description": (
+            "Draw a line in the most recent sketch. By default endpoints that "
+            "coincide with existing sketch points are connected and dimensions/"
+            "constraints are added, so chained lines form a fully constrained "
+            "outline anchored to the sketch origin; returns is_fully_constrained."
+        ),
         "inputSchema": {
             "type": "object",
             "required": ["start_x", "start_y", "end_x", "end_y"],
@@ -115,6 +147,14 @@ TOOLS: list[dict] = [
                 "end_x": {"type": "number"},
                 "end_y": {"type": "number"},
                 "end_z": {"type": "number", "default": 0},
+                "dimension": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": (
+                        "Add driving sketch dimensions and constraints "
+                        "anchored to the sketch origin (not user parameters)"
+                    ),
+                },
             },
         },
     },

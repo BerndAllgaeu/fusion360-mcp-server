@@ -465,3 +465,20 @@ class TestAnnotationConsistency:
 
         overlap = _DESTRUCTIVE & _READ_ONLY
         assert not overlap, f"Tools marked both destructive and read-only: {overlap}"
+
+
+class TestServerInstructions:
+    def test_instructions_require_dimensioned_sketches(self):
+        from fusion360_mcp.server import SERVER_INSTRUCTIONS
+
+        assert "fully dimensioned" in SERVER_INSTRUCTIONS
+        assert "is_fully_constrained" in SERVER_INSTRUCTIONS
+        assert "not user parameters" in SERVER_INSTRUCTIONS
+
+    def test_draw_tools_expose_dimension_flag(self):
+        from fusion360_mcp.tools import get_tool_by_name
+
+        for name in ("draw_rectangle", "draw_circle", "draw_line"):
+            prop = get_tool_by_name(name)["inputSchema"]["properties"]["dimension"]
+            assert prop["type"] == "boolean"
+            assert prop["default"] is True
