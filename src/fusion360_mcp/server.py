@@ -30,6 +30,26 @@ logging.basicConfig(
 )
 log = logging.getLogger("fusion360_mcp.server")
 
+# Sent to every MCP client on initialize, so the rules hold regardless of
+# which agent or project drives the server.
+SERVER_INSTRUCTIONS = """\
+Fusion 360 CAD bridge. All lengths are centimeters (Fusion's internal unit).
+
+Sketch rule: every sketch must be fully dimensioned.
+- draw_rectangle, draw_circle and draw_line add driving sketch dimensions and
+  constraints by default (anchored to the sketch origin); chained draw_line
+  calls share endpoints. Leave dimension=true.
+- These are sketch dimensions, not user parameters. Do not replace them with
+  create_parameter.
+- Geometry from draw_arc, draw_spline, create_polygon or execute_code is not
+  dimensioned automatically. Add dimensions with add_dimension / add_constraint
+  (or auto_constrain), or inside execute_code via sketch.sketchDimensions and
+  sketch.geometricConstraints.
+- Check is_fully_constrained (returned by draw_* tools, get_object_info and
+  get_scene_info) before using a sketch for a feature. If it is false, finish
+  dimensioning or tell the user why the sketch stays under-constrained.
+"""
+
 
 def _send(
     mode: str,
@@ -180,7 +200,7 @@ def _format_result(
 def main(mode: str, host: str, port: int) -> int:
     """Fusion360 MCP Server — connects Claude to Fusion 360."""
 
-    app = Server("fusion360-mcp-server")
+    app = Server("fusion360-mcp-server", instructions=SERVER_INSTRUCTIONS)
 
     # ── tools ────────────────────────────────────────────────────────
 

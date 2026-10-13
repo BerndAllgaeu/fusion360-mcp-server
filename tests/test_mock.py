@@ -115,6 +115,23 @@ class TestMockSketch:
         result = mock_command("draw_circle", {"radius": 2.5})
         assert result["radius"] == 2.5
 
+    def test_draw_tools_report_fully_constrained(self):
+        for cmd, params in (
+            ("draw_rectangle", {"width": 5, "height": 3}),
+            ("draw_circle", {"radius": 2.5}),
+            ("draw_line", {"start_x": 0, "start_y": 0, "end_x": 1, "end_y": 0}),
+        ):
+            result = mock_command(cmd, params)
+            assert result["is_fully_constrained"] is True, cmd
+            assert result["dimension_count"] > 0, cmd
+
+    def test_draw_without_dimension_is_under_constrained(self):
+        result = mock_command(
+            "draw_rectangle", {"width": 5, "height": 3, "dimension": False}
+        )
+        assert result["is_fully_constrained"] is False
+        assert result["dimension_count"] == 0
+
     def test_draw_line(self):
         result = mock_command(
             "draw_line",
