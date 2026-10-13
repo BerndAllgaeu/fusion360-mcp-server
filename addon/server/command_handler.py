@@ -452,6 +452,182 @@ class CommandHandler:
         return coll
 
     # ------------------------------------------------------------------
+    # Sketch dimensioning helpers
+    # ------------------------------------------------------------------
+
+    _SKETCH_TOL = 1e-6
+
+    @staticmethod
+    def _sketch_status(sketch):
+        return {
+            "is_fully_constrained": sketch.isFullyConstrained,
+            "dimension_count": sketch.sketchDimensions.count,
+            "constraint_count": sketch.geometricConstraints.count,
+        }
+
+    @staticmethod
+    def _try_constrain(warnings: list, label: str, fn):
+        """Run one constraint/dimension call; record a failure instead of
+        aborting, so a redundant constraint never loses the drawn geometry."""
+        try:
+            fn()
+        except Exception as exc:
+            warnings.append(f"{label}: {exc}")
+
+    def _find_sketch_point(self, sketch, p, exclude=None):
+        """Existing SketchPoint at *p* (sketch space), so chained geometry
+        shares endpoints instead of overlapping loose points."""
+        tol = self._SKETCH_TOL
+        for sp in sketch.sketchPoints:
+            g = sp.geometry
+            if sp == exclude:
+                continue
+            if abs(g.x - p.x) < tol and abs(g.y - p.y) < tol and abs(g.z - p.z) < tol:
+                return sp
+        return None
+
+    def _connect_point(self, sketch, new_pt, p, warnings: list):
+        """Tie *new_pt* to an existing sketch point at *p*, if there is one.
+
+        Uses a coincident constraint rather than passing the existing
+        SketchPoint to the add* call: Fusion's solver never reports a curve
+        built on two already-fixed shared points as fully constrained, even
+        though it has no remaining degrees of freedom.
+        """
+        existing = self._find_sketch_point(sketch, p, exclude=new_pt)
+        if existing is not None:
+            self._try_constrain(
+                warnings,
+                "coincident",
+                lambda: sketch.geometricConstraints.addCoincident(new_pt, existing),
+            )
+
+    def _has_constraint(self, entity, class_type) -> bool:
+        return any(c.objectType == class_type for c in entity.geometricConstraints)
+
+    def _dimension_point(self, sketch, ref, pt, warnings: list, line=None):
+        """Pin *pt* relative to *ref* with driving dimensions.
+
+        Zero offsets become alignment constraints (a 0-length dimension is
+        invalid).  When *pt* and *ref* are the ends of *line*, a horizontal /
+        vertical offset is expressed as a constraint on the line itself.
+        """
+        if pt.isFullyConstrained:
+            return
+        tol = self._SKETCH_TOL
+        dims = sketch.sketchDimensions
+        cons = sketch.geometricConstraints
+        orient = adsk.fusion.DimensionOrientations
+        a, b = ref.geometry, pt.geometry
+        dx, dy = b.x - a.x, b.y - a.y
+        off = 0.3
+
+        if abs(dx) < tol and abs(dy) < tol:
+            self._try_constrain(
+                warnings, "coincident", lambda: cons.addCoincident(pt, ref)
+            )
+            return
+
+        if abs(dx) < tol:
+            if line is not None:
+                self._try_constrain(
+                    warnings, "vertical", lambda: cons.addVertical(line)
+                )
+            else:
+                self._try_constrain(
+                    warnings, "vertical points", lambda: cons.addVerticalPoints(ref, pt)
+                )
+        else:
+            text = adsk.core.Point3D.create(a.x + dx / 2, b.y + off, 0)
+            self._try_constrain(
+                warnings,
+                "horizontal dimension",
+                lambda: dims.addDistanceDimension(
+                    ref, pt, orient.HorizontalDimensionOrientation, text
+                ),
+            )
+
+        if abs(dy) < tol:
+            if line is not None:
+                self._try_constrain(
+                    warnings, "horizontal", lambda: cons.addHorizontal(line)
+                )
+            else:
+                self._try_constrain(
+                    warnings,
+                    "horizontal points",
+                    lambda: cons.addHorizontalPoints(ref, pt),
+                )
+        else:
+            text = adsk.core.Point3D.create(b.x + off, a.y + dy / 2, 0)
+            self._try_constrain(
+                warnings,
+                "vertical dimension",
+                lambda: dims.addDistanceDimension(
+                    ref, pt, orient.VerticalDimensionOrientation, text
+                ),
+            )
+
+    def _dimension_rectangle(self, sketch, lines, corner_pt, warnings: list):
+        tol = self._SKETCH_TOL
+        dims = sketch.sketchDimensions
+        cons = sketch.geometricConstraints
+        orient = adsk.fusion.DimensionOrientations
+        h_type = adsk.fusion.HorizontalConstraint.classType()
+        v_type = adsk.fusion.VerticalConstraint.classType()
+        width_done = height_done = False
+
+        for i in range(lines.count):
+            line = lines.item(i)
+            s, e = line.startSketchPoint.geometry, line.endSketchPoint.geometry
+            mid_x, mid_y = (s.x + e.x) / 2, (s.y + e.y) / 2
+            if abs(s.y - e.y) < tol:
+                if not self._has_constraint(line, h_type):
+                    self._try_constrain(
+                        warnings, "horizontal", lambda: cons.addHorizontal(line)
+                    )
+                if not width_done:
+                    text = adsk.core.Point3D.create(mid_x, mid_y - 0.3, 0)
+                    self._try_constrain(
+                        warnings,
+                        "width",
+                        lambda: dims.addDistanceDimension(
+                            line.startSketchPoint,
+                            line.endSketchPoint,
+                            orient.HorizontalDimensionOrientation,
+                            text,
+                        ),
+                    )
+                    width_done = True
+            else:
+                if not self._has_constraint(line, v_type):
+                    self._try_constrain(
+                        warnings, "vertical", lambda: cons.addVertical(line)
+                    )
+                if not height_done:
+                    text = adsk.core.Point3D.create(mid_x - 0.3, mid_y, 0)
+                    self._try_constrain(
+                        warnings,
+                        "height",
+                        lambda: dims.addDistanceDimension(
+                            line.startSketchPoint,
+                            line.endSketchPoint,
+                            orient.VerticalDimensionOrientation,
+                            text,
+                        ),
+                    )
+                    height_done = True
+
+        if corner_pt is not None:
+            self._dimension_point(sketch, sketch.originPoint, corner_pt, warnings)
+
+    def _sketch_result(self, sketch, result: dict, warnings: list | None) -> dict:
+        result.update(self._sketch_status(sketch))
+        if warnings:
+            result["dimension_warnings"] = warnings
+        return result
+
+    # ------------------------------------------------------------------
     # Scene / Query
     # ------------------------------------------------------------------
 
@@ -480,6 +656,7 @@ class CommandHandler:
                     "name": s.name,
                     "profile_count": s.profiles.count,
                     "is_visible": s.isVisible,
+                    **self._sketch_status(s),
                 }
             )
 
@@ -529,6 +706,7 @@ class CommandHandler:
                     "is_visible": s.isVisible,
                     "profile_count": s.profiles.count,
                     "curve_count": s.sketchCurves.count,
+                    **self._sketch_status(s),
                 }
 
         return {"found": False, "name": name}
@@ -628,12 +806,24 @@ class CommandHandler:
         origin_x: float = 0,
         origin_y: float = 0,
         origin_z: float = 0,
+        dimension: bool = True,
     ):
         sketch = self._last_sketch()
         p1 = adsk.core.Point3D.create(origin_x, origin_y, origin_z)
         p2 = adsk.core.Point3D.create(origin_x + width, origin_y + height, origin_z)
-        sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2)
-        return {"sketch": sketch.name, "width": width, "height": height}
+        lines = sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2)
+        warnings = []
+        if dimension:
+            corner = None
+            for i in range(lines.count):
+                sp = lines.item(i).startSketchPoint
+                g = sp.geometry
+                if abs(g.x - origin_x) < 1e-6 and abs(g.y - origin_y) < 1e-6:
+                    corner = sp
+            self._dimension_rectangle(sketch, lines, corner, warnings)
+        return self._sketch_result(
+            sketch, {"sketch": sketch.name, "width": width, "height": height}, warnings
+        )
 
     def draw_circle(
         self,
@@ -641,15 +831,35 @@ class CommandHandler:
         center_x: float = 0,
         center_y: float = 0,
         center_z: float = 0,
+        dimension: bool = True,
     ):
         sketch = self._last_sketch()
         c = adsk.core.Point3D.create(center_x, center_y, center_z)
-        sketch.sketchCurves.sketchCircles.addByCenterRadius(c, radius)
-        return {
-            "sketch": sketch.name,
-            "radius": radius,
-            "center": [center_x, center_y, center_z],
-        }
+        circle = sketch.sketchCurves.sketchCircles.addByCenterRadius(c, radius)
+        warnings = []
+        if dimension:
+            # Concentric circles share their centre.
+            self._connect_point(sketch, circle.centerSketchPoint, c, warnings)
+            text = adsk.core.Point3D.create(
+                center_x + radius * 1.2, center_y + radius * 1.2, 0
+            )
+            self._try_constrain(
+                warnings,
+                "diameter",
+                lambda: sketch.sketchDimensions.addDiameterDimension(circle, text),
+            )
+            self._dimension_point(
+                sketch, sketch.originPoint, circle.centerSketchPoint, warnings
+            )
+        return self._sketch_result(
+            sketch,
+            {
+                "sketch": sketch.name,
+                "radius": radius,
+                "center": [center_x, center_y, center_z],
+            },
+            warnings,
+        )
 
     def draw_line(
         self,
@@ -659,16 +869,33 @@ class CommandHandler:
         end_y: float,
         start_z: float = 0,
         end_z: float = 0,
+        dimension: bool = True,
     ):
         sketch = self._last_sketch()
         sp = adsk.core.Point3D.create(start_x, start_y, start_z)
         ep = adsk.core.Point3D.create(end_x, end_y, end_z)
-        sketch.sketchCurves.sketchLines.addByTwoPoints(sp, ep)
-        return {
-            "sketch": sketch.name,
-            "start": [start_x, start_y, start_z],
-            "end": [end_x, end_y, end_z],
-        }
+        line = sketch.sketchCurves.sketchLines.addByTwoPoints(sp, ep)
+        warnings = []
+        if dimension:
+            # Connect to existing endpoints so chained lines form one
+            # constrained outline instead of loose segments that overlap.
+            self._connect_point(sketch, line.startSketchPoint, sp, warnings)
+            self._connect_point(sketch, line.endSketchPoint, ep, warnings)
+            self._dimension_point(
+                sketch, sketch.originPoint, line.startSketchPoint, warnings
+            )
+            self._dimension_point(
+                sketch, line.startSketchPoint, line.endSketchPoint, warnings, line=line
+            )
+        return self._sketch_result(
+            sketch,
+            {
+                "sketch": sketch.name,
+                "start": [start_x, start_y, start_z],
+                "end": [end_x, end_y, end_z],
+            },
+            warnings,
+        )
 
     def draw_arc(
         self,
@@ -685,7 +912,9 @@ class CommandHandler:
         start = adsk.core.Point3D.create(start_x, start_y, start_z)
         sweep_rad = math.radians(sweep_angle)
         sketch.sketchCurves.sketchArcs.addByCenterStartSweep(center, start, sweep_rad)
-        return {"sketch": sketch.name, "sweep_angle": sweep_angle}
+        return self._sketch_result(
+            sketch, {"sketch": sketch.name, "sweep_angle": sweep_angle}, None
+        )
 
     def draw_spline(self, spline_type: str, points: list, degree: int = 3):
         sketch = self._last_sketch()
@@ -698,11 +927,15 @@ class CommandHandler:
             sketch.sketchCurves.sketchFittedSplines.add(pts)
         else:  # control_points
             sketch.sketchCurves.sketchControlPointSplines.add(pts, degree)
-        return {
-            "sketch": sketch.name,
-            "spline_type": spline_type,
-            "points_count": len(points),
-        }
+        return self._sketch_result(
+            sketch,
+            {
+                "sketch": sketch.name,
+                "spline_type": spline_type,
+                "points_count": len(points),
+            },
+            None,
+        )
 
     def create_polygon(
         self,
@@ -728,7 +961,9 @@ class CommandHandler:
                 center_z,
             )
             sketch.sketchCurves.sketchLines.addByTwoPoints(p1, p2)
-        return {"sketch": sketch.name, "sides": sides, "radius": radius}
+        return self._sketch_result(
+            sketch, {"sketch": sketch.name, "sides": sides, "radius": radius}, None
+        )
 
     def add_constraint(
         self,
@@ -769,7 +1004,9 @@ class CommandHandler:
             raise RuntimeError(f"Unknown constraint type: {constraint_type}")
 
         constraint_map[constraint_type]()
-        return {"sketch": sketch.name, "constraint_type": constraint_type}
+        return self._sketch_result(
+            sketch, {"sketch": sketch.name, "constraint_type": constraint_type}, None
+        )
 
     def auto_constrain(
         self,
@@ -867,7 +1104,11 @@ class CommandHandler:
             raise RuntimeError(f"Unknown dimension type: {dimension_type}")
 
         dim.parameter.value = value
-        return {"sketch": sketch.name, "dimension_type": dimension_type, "value": value}
+        return self._sketch_result(
+            sketch,
+            {"sketch": sketch.name, "dimension_type": dimension_type, "value": value},
+            None,
+        )
 
     def offset_curve(
         self,

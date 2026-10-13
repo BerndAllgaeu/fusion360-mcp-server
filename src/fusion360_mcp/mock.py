@@ -151,16 +151,31 @@ def _create_sketch(p: dict) -> dict:
     return {"sketch_name": f"Sketch_mock_{plane}", "plane": plane}
 
 
+def _sketch_status(p: dict, dims: int, constraints: int) -> dict:
+    """Constraint status as the add-in reports it after a draw_* call."""
+    dimensioned = p.get("dimension", True)
+    return {
+        "is_fully_constrained": dimensioned,
+        "dimension_count": dims if dimensioned else 0,
+        "constraint_count": constraints,
+    }
+
+
 def _draw_rectangle(p: dict) -> dict:
     return {
         "sketch_name": "Sketch_mock_xy",
         "width": p.get("width", 1),
         "height": p.get("height", 1),
+        **_sketch_status(p, dims=4, constraints=8),
     }
 
 
 def _draw_circle(p: dict) -> dict:
-    return {"sketch_name": "Sketch_mock_xy", "radius": p.get("radius", 1)}
+    return {
+        "sketch_name": "Sketch_mock_xy",
+        "radius": p.get("radius", 1),
+        **_sketch_status(p, dims=1, constraints=1),
+    }
 
 
 def _draw_line(p: dict) -> dict:
@@ -168,6 +183,7 @@ def _draw_line(p: dict) -> dict:
         "sketch_name": "Sketch_mock_xy",
         "start": [p.get("start_x", 0), p.get("start_y", 0)],
         "end": [p.get("end_x", 1), p.get("end_y", 1)],
+        **_sketch_status(p, dims=2, constraints=1),
     }
 
 

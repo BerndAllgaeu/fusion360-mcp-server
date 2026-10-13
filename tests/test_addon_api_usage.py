@@ -160,3 +160,54 @@ class TestDraftFaces:
         assert not _has_silent_except(node), (
             "draft_faces must not use a bare 'except: pass'"
         )
+
+
+class TestSketchDimensioning:
+    """draw_* tools must dimension what they draw (default on, opt-out)."""
+
+    def _param_default(self, name: str, param: str):
+        node = _method(name)
+        args = node.args.args
+        defaults = node.args.defaults
+        offset = len(args) - len(defaults)
+        for i, arg in enumerate(args):
+            if arg.arg == param:
+                assert i >= offset, f"{name}({param}) needs a default"
+                return ast.literal_eval(defaults[i - offset])
+        raise AssertionError(f"{name} has no '{param}' parameter")
+
+    def test_draw_tools_dimension_by_default(self):
+        for name in ("draw_rectangle", "draw_circle", "draw_line"):
+            assert self._param_default(name, "dimension") is True
+
+    def test_draw_tools_add_sketch_dimensions(self):
+        for name in ("draw_rectangle", "draw_circle", "draw_line"):
+            attrs = _called_attrs(_method(name))
+            assert attrs & {
+                "_dimension_rectangle",
+                "_dimension_point",
+                "addDiameterDimension",
+            }, f"{name} must add sketch dimensions"
+
+    def test_sketch_results_report_constraint_status(self):
+        attrs = _called_attrs(_method("_sketch_status"))
+        assert "isFullyConstrained" not in attrs  # property, not a call
+        src = ast.unparse(_method("_sketch_status"))
+        assert "isFullyConstrained" in src
+        for name in (
+            "draw_rectangle",
+            "draw_circle",
+            "draw_line",
+            "draw_arc",
+            "draw_spline",
+            "create_polygon",
+            "add_dimension",
+            "add_constraint",
+        ):
+            assert "_sketch_result" in _called_attrs(_method(name)), name
+        for name in ("get_scene_info", "get_object_info"):
+            assert "_sketch_status" in _called_attrs(_method(name)), name
+
+    def test_dimension_failures_are_recorded_not_swallowed(self):
+        node = _method("_try_constrain")
+        assert not _has_silent_except(node)
